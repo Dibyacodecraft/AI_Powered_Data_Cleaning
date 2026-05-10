@@ -1,0 +1,15 @@
+pandas
+numpy
+fastapi
+streamlit
+langchain
+langgraph
+langchain_openai
+psycopg2-binary
+sqlalchemy
+requests
+uvicorn
+python-multipart
+python-dotenv
+aiohttp
+openpyxl

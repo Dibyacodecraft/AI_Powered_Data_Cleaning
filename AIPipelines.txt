@@ -1,0 +1,211 @@
+Project Pipeline Overview**
+
+The project follows a structured sequence to build an automated data cleaning pipeline:
+
+1.  **Environment Setup:** Creating a dedicated project folder and virtual environment (using `venv` or `Conda`) to prevent library conflicts.
+2.  **Package Installation:** Installing core libraries including `pandas`, `numpy`, `FastAPI`, `Streamlit`, `LangChain`, `LangGraph`, and `psycopg2` for database interaction.
+3.  **Folder Structure:** Organizing the project into `data/` (raw files), `scripts/` (logic), and the root application file (`app.py`).
+4.  **Data Ingestion:** Handling raw data from multiple sources: CSV, Excel, PostgreSQL databases, and external APIs.
+5.  **Data Cleaning Logic:**
+    *   **Rule-Based:** Standard Python/Pandas logic for handling missing values (mean, median, mode, or drop), removing duplicates, and fixing data types.
+    *   **AI-Powered:** A LangGraph-based AI agent that uses OpenAI’s LLM to intelligently analyze and clean data in batches to respect token limits.
+6.  **Backend Development:** Building a FastAPI server to expose endpoints for processing data from different sources.
+7.  **Frontend Development:** A Streamlit interactive UI that allows users to upload files or query databases and view cleaned results.
+
+---
+
+The following code segments are organized by script as presented in the video.
+
+1. Connection Testing (`test_postgres_connection.py`)**
+This script verifies the connection to the PostgreSQL database.
+
+python
+import psycopg2
+
+# Connection parameters
+DB_host = "localhost"
+Port = 5432
+DB_name = "demoDB"
+Username = "postgres"
+Password = "admin" # Set during your PGAdmin configuration
+
+try:
+    # Attempting to connect
+    connection = psycopg2.connect(
+        database=DB_name,
+        user=Username,
+        password=Password,
+        host=DB_host,
+        port=Port
+    )
+    cursor = connection.cursor()
+    # Check if table exists
+    cursor.execute("SELECT * FROM my_table") # 'my_table' is the sample table
+    tables = cursor.fetchall()
+    print("Postgres connection was successful")
+    print("Tables in database:", tables)
+    connection.close()
+except Exception as e:
+    print(f"Error: {e}")
+```
+
+#### **2. Data Ingestion (`scripts/data_injection.py`)**
+This class handles loading and fetching data from various sources.
+
+```python
+import os
+import pandas as pd
+import requests
+from sqlalchemy import create_engine
+
+class DataInjection:
+    def __init__(self, db_url=None):
+        self.engine = create_engine(db_url) if db_url else None #
+
+    def load_csv(self, file_path):
+        try:
+            df = pd.read_csv(file_path)
+            print("CSV loaded successfully")
+            return df
+        except Exception as e:
+            print(f"Error loading CSV: {e}")
+
+    def load_excel(self, file_path):
+        try:
+            df = pd.read_excel(file_path)
+            print("Excel loaded successfully")
+            return df
+        except Exception as e:
+            print(f"Error loading Excel: {e}")
+
+    def fetch_from_api(self, api_url):
+        response = requests.get(api_url)
+        if response.status_code == 200:
+            data = response.json()
+            df = pd.DataFrame(data)
+            print("Data from API successful")
+            return df
+        else:
+            print("API Error")
+```
+
+#### **3. Rule-Based Data Cleaning (`scripts/data_cleaning.py`)**
+This handles traditional preprocessing before sending data to the AI agent.
+
+```python
+import pandas as pd
+import numpy as np
+
+class DataCleaning:
+    def handle_missing_values(self, df, strategy="mean"):
+        if strategy == "mean":
+            return df.fillna(df.mean())
+        elif strategy == "median":
+            return df.fillna(df.median())
+        elif strategy == "mode":
+            return df.fillna(df.mode().iloc)
+        elif strategy == "drop":
+            return df.dropna()
+
+    def remove_duplicates(self, df):
+        return df.drop_duplicates()
+
+    def fixed_data_types(self, df):
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='ignore')
+        return df
+
+    def clean_data(self, df):
+        df = self.handle_missing_values(df)
+        df = self.remove_duplicates(df)
+        df = self.fixed_data_types(df)
+        return df
+```
+
+4. AI Cleaning Agent (`scripts/AI_agent.py`)
+This defines the AI-powered cleaning logic using LangChain and LangGraph.
+
+```python
+import os
+from dotenv import load_dotenv
+from langchain_openai import OpenAI
+from langgraph.graph import StateGraph
+from pydantic import BaseModel
+
+load_dotenv() # Loads OPENAI_API_KEY from .env file
+
+class CleaningState(BaseModel):
+    input_text: str
+    structured_response: str = ""
+
+class AIAgent:
+    def __init__(self):
+        self.llm = OpenAI(temperature=0) # Deterministic output
+        self.workflow = StateGraph(CleaningState)
+
+    def process_data(self, df):
+        # Batch processing: 20 rows at a time to prevent token limits
+        for i in range(0, len(df), 20):
+            batch = df.iloc[i:i+20]
+            prompt = f"Clean the following data batch: {batch.to_string()}"
+            # AI processes missing values, imputation, and formatting
+            response = self.llm.invoke(prompt)
+            # Logic to reintegrate response into dataframe...
+        return df
+```
+
+#### **5. FastAPI Backend (`scripts/backend.py`)**
+The server that orchestrates the cleaning requests.
+
+```python
+from fastapi import FastAPI, UploadFile, File
+from scripts.AI_agent import AIAgent
+from scripts.data_cleaning import DataCleaning
+import pandas as pd
+import uvicorn
+
+app = FastAPI()
+ai_agent = AIAgent()
+rule_cleaner = DataCleaning()
+
+@app.post("/clean_data")
+async def clean_data(file: UploadFile = File(...)):
+    # Reads CSV/Excel, applies rule-based then AI cleaning
+    df = pd.read_csv(file.file)
+    df = rule_cleaner.clean_data(df)
+    df = ai_agent.process_data(df)
+    return df.to_json()
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8000) 
+
+#### **6. Streamlit UI (`app.py`)
+The interactive frontend for the user.
+
+`python
+import streamlit as st
+import requests
+import pandas as pd
+
+FASTAPI_URL = "http://127.0.0.1:8000"
+
+st.set_page_config(page_title="AI Power Data Cleaning")
+st.header("Data Source Selection")
+
+option = st.selectbox("Select Data Source", ["CSV", "Database Query", "API Data"])
+
+if option == "CSV":
+    uploaded_file = st.file_uploader("Upload CSV")
+    if st.button("Clean Data") and uploaded_file:
+        files = {"file": uploaded_file.getvalue()}
+        response = requests.post(f"{FASTAPI_URL}/clean_data", files=files)
+        st.write(response.json()) # Displays cleaned data
+```
+
+ **Required Installations**
+The video emphasizes these specific installations before running the final project:
+*   `pip install langchain_openai`
+*   `pip install aiohttp`
+*   `pip install python-dotenv`
+*   `pip install langgraph`
+*   `pip install python-multipart`
